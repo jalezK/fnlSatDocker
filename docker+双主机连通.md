@@ -139,36 +139,6 @@ ip link set dev sat3-sat4 netns sat3
 ip netns exec sat3 ip link set dev sat3-sat4 up
 ip netns exec sat3 ip addr add dev sat3-sat4 152.0.43.2/24
 
-
-
-
-
-# 4. 进入容器开启相关模块
-
-# 进入到容器中
-# tip:必须得给每个卫星的链路开启mpls转发，不然转发不了呀
-# ps.容器的模块继承虚拟机，在虚拟机中开了mpls转发模块就行，容器中也有了
-# sat4
-sudo docker exec -it sat4 /bin/bash -c 'sysctl -w net.ipv4.ip_forward=1;sysctl -w net.ipv4.conf.all.rp_filter=0;sysctl -w net.ipv4.conf.lo.rp_filter=0;sysctl -w net.mpls.conf.lo.input=1;sysctl -w net.ipv4.conf.sat4-sat2.rp_filter=0;sysctl -w net.mpls.conf.sat4-sat2.input=1;sysctl -w net.ipv4.conf.sat4-sat3.rp_filter=0;sysctl -w net.mpls.conf.sat4-sat3.input=1;sysctl -w net.mpls.platform_labels=1048575'
-
-sudo docker exec -it sat4 /bin/bash -c 'echo 1 MPLS >> /etc/iproute2/rt_tables'
-
-#sat3
-sudo docker exec -it sat3 /bin/bash -c 'sysctl -w net.ipv4.ip_forward=1;sysctl -w net.ipv4.conf.all.rp_filter=0;sysctl -w net.ipv4.conf.lo.rp_filter=0;sysctl -w net.mpls.conf.lo.input=1;sysctl -w net.ipv4.conf.sat3-sat1.rp_filter=0;sysctl -w net.mpls.conf.sat3-sat1.input=1;sysctl -w net.ipv4.conf.sat3-sat2.rp_filter=0;sysctl -w net.mpls.conf.sat3-sat2.input=1;sysctl -w net.ipv4.conf.sat3-sat4.rp_filter=0;sysctl -w net.mpls.conf.sat3-sat4.input=1;sysctl -w net.mpls.platform_labels=1048575'
-
-sudo docker exec -it sat3 /bin/bash -c 'echo 1 MPLS >> /etc/iproute2/rt_tables'
-
-#sat2
-sudo docker exec -it sat2 /bin/bash -c 'sysctl -w net.ipv4.ip_forward=1;sysctl -w net.ipv4.conf.all.rp_filter=0;sysctl -w net.ipv4.conf.lo.rp_filter=0;sysctl -w net.mpls.conf.lo.input=1;sysctl -w net.ipv4.conf.sat2-sat1.rp_filter=0;sysctl -w net.mpls.conf.sat2-sat1.input=1;sysctl -w net.ipv4.conf.sat2-sat3.rp_filter=0;sysctl -w net.mpls.conf.sat2-sat3.input=1;sysctl -w net.ipv4.conf.sat2-sat4.rp_filter=0;sysctl -w net.mpls.conf.sat2-sat4.input=1;sysctl -w net.mpls.platform_labels=1048575'
-
-sudo docker exec -it sat2 /bin/bash -c 'echo 1 MPLS >> /etc/iproute2/rt_tables'
-
-#sat1
-sudo docker exec -it sat1 /bin/bash -c 'sysctl -w net.ipv4.ip_forward=1;sysctl -w net.ipv4.conf.all.rp_filter=0;sysctl -w net.ipv4.conf.lo.rp_filter=0;sysctl -w net.mpls.conf.lo.input=1;sysctl -w net.ipv4.conf.sat1-sat2.rp_filter=0;sysctl -w net.mpls.conf.sat1-sat2.input=1;sysctl -w net.ipv4.conf.sat1-sat3.rp_filter=0;sysctl -w net.mpls.conf.sat1-sat3.input=1;sysctl -w net.mpls.platform_labels=1048575'
-
-sudo docker exec -it sat1 /bin/bash -c 'echo 1 MPLS >> /etc/iproute2/rt_tables'
-
-
 ```
 
 ###1.2建立SRS与ffmpeg容器
@@ -178,7 +148,7 @@ docker network create --subnet=172.18.0.0/16 --gateway=172.18.0.1 srs_ffmpeg_net
 
 # 打开ffmpeg容器和SRS服务器容器
 # SRS服务器
-docker  run -itd --name=ubuntu-srs --network=srs_ffmpeg_network --ip=172.18.0.2 alexkkbupt/ubuntu-srs-alexk:v0.1
+docker  run -itd --privileged --name=ubuntu-srs -v /home/srs:/etc/frr --network=srs_ffmpeg_network --ip=172.18.0.2 alexkkbupt/ubuntu-srs-iperf:v0.1
 # 进入容器
 docker exec -it --privileged ubuntu-srs bash
 # 进入目录
@@ -194,14 +164,15 @@ ln -s /proc/$ubuntu_srs_pid/ns/net /var/run/netns/ubuntu-srs
 
 # ffmpeg服务器
 
-docker  run -itd --name=ubuntu-ffmpeg --network=srs_ffmpeg_network --ip=172.18.0.3 alexkkbupt/ubuntu-ffmpeg-alexk:v0.1
-# 进入容器
-docker exec -it --privileged ubuntu-ffmpeg bash
+docker  run -itd --privileged --name=ubuntu-ffmpeg -v /home/ffmpeg:/etc/frr --network=srs_ffmpeg_network --ip=172.18.0.3 alexkkbupt/ubuntu-ffmpeg-iperf:v0.1
 # 设置容器命名空间
 ubuntu_ffmpeg_pid=`docker inspect -f '{{.State.Pid}}' ubuntu-ffmpeg`
 # 3780
 ln -s /proc/$ubuntu_ffmpeg_pid/ns/net /var/run/netns/ubuntu-ffmpeg
 
+# 得在发端网卡降低MTU，切忌修改交换机的MTU，也不要在交换机上收发业务
+ip netns exec ubuntu-srs ifconfig ens-sat1 mtu 1300
+ip netns exec ubuntu-ffmpeg ifconfig ens2-sat4 mtu 1300
 ```
 
 
@@ -276,29 +247,53 @@ ip netns exec sat4 ip addr add dev sat4-ens2 152.0.81.2/24
 
 ```bash
 # SRS服务器
-docker exec -it --privileged ubuntu-srs bash
 # 创建网卡后执行
 # 添加路由
-ip route rep 0.0.0.0/0 via 152.0.91.2
-ip route rep 172.18.0.0/16 via 172.18.0.2
+ip netns exec ubuntu-srs ip route rep 0.0.0.0/0 via 152.0.91.2
+ip netns exec ubuntu-srs ip route rep 172.18.0.0/16 via 172.18.0.2
 
-	
-ip netns exec ubuntu-srs tc qdisc rep dev ens-sat1 root netem delay 2000ms
+
+#ip netns exec ubuntu-srs tc qdisc rep dev ens-sat1 root netem delay 2000ms
 
 # ffmpeg容器
 # 创建网卡后执行
 # 添加路由
-docker exec -it --privileged ubuntu-ffmpeg bash
-ip route rep 0.0.0.0/0 via 152.0.81.2
-ip route rep 172.18.0.0/16 via 172.18.0.3
-
-iptables -t mangle -A POSTROUTING -p TCP --dport 1935 -j DSCP --set-dscp 40
-
+ip netns exec ubuntu-ffmpeg ip route rep 0.0.0.0/0 via 152.0.81.2
+ip netns exec ubuntu-ffmpeg ip route rep 172.18.0.0/16 via 172.18.0.3
+ip netns exec ubuntu-ffmpeg iptables -t mangle -A POSTROUTING -p TCP --dport 1935 -j DSCP --set-dscp 41
+# 对应tos 2
 
 
 # 宿主机上的操作
- ip route add 152.0.91.1 via 172.18.0.2
+ip route add 152.0.91.1 via 172.18.0.2
 ```
+
+
+
+```bash
+# 4. 进入容器开启相关模块
+
+# 进入到容器中
+# tip:必须得给每个卫星的链路开启mpls转发，不然转发不了呀
+# ps.容器的模块继承虚拟机，在虚拟机中开了mpls转发模块就行，容器中也有了
+# sat4
+source /home/sunkk/Desktop/BJKW/functionLearn/openModule
+enableForwardAndMplsModule sat1
+enableForwardAndMplsModule sat2
+enableForwardAndMplsModule sat3
+enableForwardAndMplsModule sat4
+enableForwardAndMplsModule ubuntu-srs
+enableForwardAndMplsModule ubuntu-ffmpeg
+
+configMTU sat1
+configMTU sat2
+configMTU sat3
+configMTU sat4
+configMTU ubuntu-srs
+configMTU ubuntu-ffmpeg
+```
+
+
 
 ###1.5推流
 
@@ -321,10 +316,11 @@ ip netns exec ubuntu-srs tcpdump -i ens-sat1 -A -w /home/sunkk/Documents/Wiresha
 ip netns exec sat1 tcpdump -i sat1-ens -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat1-ens.cap &
 ip netns exec sat1 tcpdump -i sat1-sat3 -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat1-sat3.cap &
 ip netns exec sat1 tcpdump -i sat1-sat2 -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat1-sat2.cap &
+ip netns exec sat3 tcpdump -i sat3-sat2 -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat3-sat2.cap &
 ip netns exec sat4 tcpdump -i sat4-sat3 -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat4-sat3.cap &
 ip netns exec sat4 tcpdump -i sat4-sat2 -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat4-sat2.cap &
 ip netns exec sat4 tcpdump -i sat4-ens2 -A -w /home/sunkk/Documents/Wireshark/VNET_MPLS/sat4-ens2.cap &
-sleep 2
+sleep 4
 killall tcpdump
 ```
 
@@ -391,4 +387,6 @@ iptables -t nat -A PREROUTING -i ens2-sat4 -d 152.0.81.1 -j DNAT --to-destinatio
 ip route add 172.16.179.164 via 172.16.179.156
 
 ```
+
+
 
