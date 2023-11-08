@@ -9,8 +9,8 @@
 * Docker虚拟网络环境构建
 * SRS&ffmpeg推流
 * DSCP设置完成
-
+* 将ffmpeg推流数据包压入MPLS-SR标签(updated)
 todo：
 
-* 将ffmpeg推流数据包压入MPLS-SR标签
+* ~~将ffmpeg推流数据包压入MPLS-SR标签~~
 * 优先级转发
